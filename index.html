@@ -618,9 +618,10 @@ The 3 variants are:
       let res, retries = 3;
       while (true) {
         res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: reqBody });
-        if (res.status === 429 && retries > 0) {
+        if ((res.status === 429 || res.status === 403) && retries > 0) {
           const errBody = await res.json().catch(() => ({}));
           const errMsg = errBody.error?.message || '';
+          if (res.status === 403 && !errMsg.toLowerCase().includes('quota')) { throw new Error(errMsg || 'Forbidden'); }
           const match = errMsg.match(/retry in ([\d.]+)s/i);
           const wait = match ? Math.ceil(parseFloat(match[1])) : 10;
           retries--;
@@ -635,7 +636,7 @@ The 3 variants are:
           const err = await res.json().catch(() => ({}));
           const msg = err.error?.message || `API error ${res.status}`;
           if (res.status === 400 && msg.includes('API_KEY')) throw new Error('Invalid API key. Get a free one at aistudio.google.com/apikey');
-          if (res.status === 429) throw new Error('Rate limit exceeded. Please wait a moment and try again.');
+          if (res.status === 429 || (res.status === 403 && msg.toLowerCase().includes('quota'))) throw new Error('Rate limit exceeded. Please wait a moment and try again.');
           throw new Error(msg);
         }
         break;
