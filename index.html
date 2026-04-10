@@ -320,10 +320,10 @@
     <div>
       <div class="key-area">
         <div class="dot" id="dot"></div>
-        <input type="password" id="apiKey" placeholder="Gemini API key" />
+        <input type="password" id="apiKey" placeholder="OpenAI API key" />
         <button class="key-save" onclick="saveKey()">Save</button>
       </div>
-      <div class="key-hint">Free from <a href="https://aistudio.google.com/apikey" target="_blank">aistudio.google.com</a></div>
+      <div class="key-hint">From <a href="https://platform.openai.com/api-keys" target="_blank">platform.openai.com</a></div>
     </div>
   </div>
 
@@ -402,7 +402,7 @@
     </div>
 
     <div class="hint"><kbd>Ctrl</kbd> + <kbd>Enter</kbd> to polish</div>
-    <div class="powered">Powered by Gemini 2.0 Flash Lite</div>
+    <div class="powered">Powered by GPT-4o mini</div>
   </div>
 </div>
 
@@ -456,12 +456,12 @@
   }
   function recordPick(i) { favCounts[i] = (favCounts[i] || 0) + 1; try { localStorage.setItem('qp_fav_counts', JSON.stringify(favCounts)); } catch(e) {} }
 
-  try { const k = localStorage.getItem('qp_gemini_key'); if (k) { apiKey = k; apiKeyInput.value = k; dot.classList.add('on'); } } catch(e) {}
+  try { const k = localStorage.getItem('qp_openai_key'); if (k) { apiKey = k; apiKeyInput.value = k; dot.classList.add('on'); } } catch(e) {}
 
   function saveKey() {
     apiKey = apiKeyInput.value.trim();
-    if (apiKey) { try { localStorage.setItem('qp_gemini_key', apiKey); } catch(e) {} dot.classList.add('on'); }
-    else { try { localStorage.removeItem('qp_gemini_key'); } catch(e) {} dot.classList.remove('on'); }
+    if (apiKey) { try { localStorage.setItem('qp_openai_key', apiKey); } catch(e) {} dot.classList.add('on'); }
+    else { try { localStorage.removeItem('qp_openai_key'); } catch(e) {} dot.classList.remove('on'); }
   }
 
   function setMode(el) {
@@ -548,7 +548,7 @@
     const tone = TONE_FULL[toneSlider.value - 1];
     const base = `You are a message polisher for Richard Ong FAPI CPV, Technical Manager at the Australian Property Institute.
 
-Return ONLY a JSON array of exactly 3 polished string variants. No preamble, no markdown, no explanation, no wrapping object. Just: ["variant1", "variant2", "variant3"]
+Return a JSON object with a key "variants" containing an array of exactly 3 polished string variants. Example: {"variants": ["variant1", "variant2", "variant3"]}
 
 Rules (non-negotiable):
 - NEVER use em-dashes or en-dashes. Use commas, parentheses, or start a new sentence.
@@ -584,7 +584,7 @@ The 3 variants are:
       try {
         const p = JSON.parse(s);
         if (Array.isArray(p) && p.length >= 3) return p.slice(0, 3);
-        if (p && typeof p === 'object') for (const k of Object.keys(p)) if (Array.isArray(p[k]) && p[k].length >= 4) return p[k].slice(0, 4);
+        if (p && typeof p === 'object') { if (Array.isArray(p.variants) && p.variants.length >= 3) return p.variants.slice(0, 3); for (const k of Object.keys(p)) if (Array.isArray(p[k]) && p[k].length >= 3) return p[k].slice(0, 3); }
       } catch(e) {} return null;
     };
     let r = tryParse(text); if (r) return r;
@@ -596,33 +596,38 @@ The 3 variants are:
   async function polish() {
     const raw = inputEl.value.trim();
     if (!raw) return;
-    if (!apiKey) { showErr('Add your free Gemini API key first. Get one at aistudio.google.com/apikey'); return; }
+    if (!apiKey) { showErr('Add your OpenAI API key first. Get one at platform.openai.com/api-keys'); return; }
     originalText = raw;
     polishBtn.classList.add('loading'); polishBtn.disabled = true; errMsg.classList.remove('visible');
-    const parts = [];
+    const userContent = [];
     const activeImages = contextImages.filter(Boolean);
     if (activeImages.length > 0) {
-      parts.push({ text: 'CONTEXT: The following screenshots show the email/message I am replying to. Read them carefully to understand the context of my reply.' });
-      for (const img of activeImages) parts.push({ inlineData: { mimeType: img.mimeType, data: img.base64 } });
+      userContent.push({ type: 'text', text: 'CONTEXT: The following screenshots show the email/message I am replying to. Read them carefully to understand the context of my reply.' });
+      for (const img of activeImages) userContent.push({ type: 'image_url', image_url: { url: `data:${img.mimeType};base64,${img.base64}` } });
     }
     const ctxText = ctxInput.value.trim();
-    if (ctxText) parts.push({ text: `CONTEXT (the message I'm replying to):\n${ctxText}` });
-    parts.push({ text: (activeImages.length > 0 || ctxText) ? `MY REPLY TO POLISH:\n${raw}` : raw });
+    if (ctxText) userContent.push({ type: 'text', text: `CONTEXT (the message I'm replying to):\n${ctxText}` });
+    userContent.push({ type: 'text', text: (activeImages.length > 0 || ctxText) ? `MY REPLY TO POLISH:\n${raw}` : raw });
+    const userMsg = userContent.length === 1 && userContent[0].type === 'text' ? { role: 'user', content: userContent[0].text } : { role: 'user', content: userContent };
     try {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:streamGenerateContent?alt=sse&key=${apiKey}`;
+      const url = 'https://api.openai.com/v1/chat/completions';
       const reqBody = JSON.stringify({
-        systemInstruction: { parts: [{ text: buildSystemPrompt() }] },
-        contents: [{ parts }],
-        generationConfig: { responseMimeType: 'application/json', temperature: 0.7 }
+        model: 'gpt-4o-mini',
+        messages: [
+          { role: 'system', content: buildSystemPrompt() },
+          userMsg
+        ],
+        response_format: { type: 'json_object' },
+        temperature: 0.7,
+        stream: true
       });
       let res, retries = 6, backoff = 5;
       while (true) {
-        res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: reqBody });
-        if ((res.status === 429 || res.status === 403) && retries > 0) {
+        res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` }, body: reqBody });
+        if (res.status === 429 && retries > 0) {
           const errBody = await res.json().catch(() => ({}));
           const errMsg = errBody.error?.message || '';
-          if (res.status === 403 && !errMsg.toLowerCase().includes('quota')) { throw new Error(errMsg || 'Forbidden'); }
-          const match = errMsg.match(/retry in ([\d.]+)s/i);
+          const match = errMsg.match(/try again in ([\d.]+)s/i);
           const wait = match ? Math.ceil(parseFloat(match[1])) + 2 : backoff;
           retries--;
           backoff = Math.min(backoff * 2, 120);
@@ -636,8 +641,8 @@ The 3 variants are:
         if (!res.ok) {
           const err = await res.json().catch(() => ({}));
           const msg = err.error?.message || `API error ${res.status}`;
-          if (res.status === 400 && msg.includes('API_KEY')) throw new Error('Invalid API key. Get a free one at aistudio.google.com/apikey');
-          if (res.status === 429 || (res.status === 403 && msg.toLowerCase().includes('quota'))) throw new Error('Rate limit exceeded. Please wait a moment and try again.');
+          if (res.status === 401) throw new Error('Invalid API key. Get one at platform.openai.com/api-keys');
+          if (res.status === 429) throw new Error('Rate limit exceeded. Please wait a moment and try again.');
           throw new Error(msg);
         }
         break;
@@ -662,7 +667,7 @@ The 3 variants are:
           if (!jsonStr || jsonStr === '[DONE]') continue;
           try {
             const parsed = JSON.parse(jsonStr);
-            const text = parsed.candidates?.[0]?.content?.parts?.[0]?.text;
+            const text = parsed.choices?.[0]?.delta?.content;
             if (text) {
               accumulated += text;
               // Try to parse partial results and update UI
