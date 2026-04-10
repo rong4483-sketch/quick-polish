@@ -402,7 +402,7 @@
     </div>
 
     <div class="hint"><kbd>Ctrl</kbd> + <kbd>Enter</kbd> to polish</div>
-    <div class="powered">Powered by Gemini 2.5 Flash</div>
+    <div class="powered">Powered by Gemini 2.0 Flash</div>
   </div>
 </div>
 
@@ -609,13 +609,13 @@ The 3 variants are:
     if (ctxText) parts.push({ text: `CONTEXT (the message I'm replying to):\n${ctxText}` });
     parts.push({ text: (activeImages.length > 0 || ctxText) ? `MY REPLY TO POLISH:\n${raw}` : raw });
     try {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:streamGenerateContent?alt=sse&key=${apiKey}`;
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:streamGenerateContent?alt=sse&key=${apiKey}`;
       const reqBody = JSON.stringify({
         systemInstruction: { parts: [{ text: buildSystemPrompt() }] },
         contents: [{ parts }],
-        generationConfig: { responseMimeType: 'application/json', temperature: 0.7, thinkingConfig: { thinkingBudget: 0 } }
+        generationConfig: { responseMimeType: 'application/json', temperature: 0.7 }
       });
-      let res, retries = 3;
+      let res, retries = 6, backoff = 5;
       while (true) {
         res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: reqBody });
         if ((res.status === 429 || res.status === 403) && retries > 0) {
@@ -623,10 +623,11 @@ The 3 variants are:
           const errMsg = errBody.error?.message || '';
           if (res.status === 403 && !errMsg.toLowerCase().includes('quota')) { throw new Error(errMsg || 'Forbidden'); }
           const match = errMsg.match(/retry in ([\d.]+)s/i);
-          const wait = match ? Math.ceil(parseFloat(match[1])) : 10;
+          const wait = match ? Math.ceil(parseFloat(match[1])) + 2 : backoff;
           retries--;
+          backoff = Math.min(backoff * 2, 120);
           for (let s = wait; s > 0; s--) {
-            showErr(`Rate limited — retrying in ${s}s...`);
+            showErr(`Rate limited — retrying in ${s}s... (${retries} retries left)`);
             await new Promise(r => setTimeout(r, 1000));
           }
           document.querySelector('.err-msg')?.classList.remove('visible');
